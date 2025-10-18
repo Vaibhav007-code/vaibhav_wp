@@ -39,6 +39,8 @@ const io = new Server(server, {
   pingInterval: 25000
 });
 
+app.set('trust proxy', 1);
+
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
@@ -60,26 +62,33 @@ app.use(express.urlencoded({ extended: true }));
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'wbridge-secret-key',
+const sessionMiddleware = session({
+  secret: process.env.SESSION_SECRET || 'wbridge-secret-key-change-this-in-production',
   resave: false,
   saveUninitialized: false,
+  name: 'wbridge.sid',
   cookie: {
     secure: isProduction,
     maxAge: 24 * 60 * 60 * 1000,
     httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax'
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/'
   },
-  proxy: isProduction
-}));
+  proxy: true
+});
+
+app.use(sessionMiddleware);
 
 let whatsappClient;
 
 const isAuthenticated = (req, res, next) => {
+  console.log('🔐 Auth check - Session ID:', req.sessionID);
+  console.log('🔐 Authenticated:', req.session.authenticated);
+  
   if (req.session.authenticated) {
     next();
   } else {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ error: 'Unauthorized', sessionID: req.sessionID });
   }
 };
 
@@ -88,7 +97,8 @@ app.get('/', (req, res) => {
     status: 'WBridge Backend Running',
     version: '1.0.0',
     author: 'Vaibhav',
-    socketConnections: io.engine.clientsCount
+    socketConnections: io.engine.clientsCount,
+    sessionID: req.sessionID
   });
 });
 
@@ -97,11 +107,28 @@ app.post('/api/login', async (req, res) => {
     const { password } = req.body;
     const correctPassword = process.env.DASHBOARD_PASSWORD || 'VaibhavDiwali2024';
 
+    console.log('🔑 Login attempt - Session ID:', req.sessionID);
+
     if (password === correctPassword) {
       req.session.authenticated = true;
-      await new Promise((resolve) => req.session.save(resolve));
-      console.log('✅ Login successful');
-      res.json({ success: true, message: 'Login successful' });
+      
+      await new Promise((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            console.error('❌ Session save error:', err);
+            reject(err);
+          } else {
+            console.log('✅ Login successful - Session saved:', req.sessionID);
+            resolve();
+          }
+        });
+      });
+
+      res.json({ 
+        success: true, 
+        message: 'Login successful',
+        sessionID: req.sessionID
+      });
     } else {
       console.log('❌ Invalid password attempt');
       res.status(401).json({ error: 'Invalid password' });
@@ -113,12 +140,20 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-  req.session.destroy();
-  res.json({ success: true, message: 'Logged out successfully' });
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Logout error:', err);
+    }
+    res.json({ success: true, message: 'Logged out successfully' });
+  });
 });
 
 app.get('/api/auth-status', (req, res) => {
-  res.json({ authenticated: !!req.session.authenticated });
+  console.log('🔍 Auth status check - Session ID:', req.sessionID, 'Authenticated:', req.session.authenticated);
+  res.json({ 
+    authenticated: !!req.session.authenticated,
+    sessionID: req.sessionID
+  });
 });
 
 app.get('/api/status', isAuthenticated, (req, res) => {
@@ -453,3 +488,14 @@ process.on('SIGINT', async () => {
   }
   process.exit(0);
 });
+```
+
+### **2. Update Render Environment Variables**
+
+In your Render backend dashboard, make sure you have:
+```
+NODE_ENV=production
+FRONTEND_URL=https://vaibhav-wp2.onrender.com
+SESSION_SECRET=your-very-secure-random-string-here
+DASHBOARD_PASSWORD=YourPassword123
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
