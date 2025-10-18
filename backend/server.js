@@ -13,10 +13,9 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
 // ====== FRONTEND URL ======
-// Ensure no trailing slash here
 const FRONTEND_URLS = [
   (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, ''),
-  'http://localhost:5173', // optional local dev
+  'http://localhost:5173',
 ];
 
 const io = new Server(server, {
@@ -35,11 +34,10 @@ const io = new Server(server, {
   }
 });
 
-// ====== CORS ======
+// ====== CORS - CRITICAL: Must allow credentials ======
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
-
     const cleanedOrigin = origin.replace(/\/$/, '');
     if (FRONTEND_URLS.includes(cleanedOrigin)) {
       return callback(null, true);
@@ -52,22 +50,25 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-
 // ====== Body Parser ======
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ====== Session ======
+// ====== Session - FIXED FOR CROSS-ORIGIN ======
+const isProduction = process.env.NODE_ENV === 'production';
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'wbridge-secret-key',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,
+    secure: isProduction, // true in production (requires HTTPS)
     maxAge: 24 * 60 * 60 * 1000,
     httpOnly: true,
-    sameSite: 'lax'
-  }
+    sameSite: isProduction ? 'none' : 'lax', // 'none' required for cross-origin
+    domain: isProduction ? undefined : undefined // Let browser handle it
+  },
+  proxy: isProduction // Trust proxy in production
 }));
 
 // ====== WhatsApp Client ======
@@ -75,6 +76,7 @@ let whatsappClient;
 
 // ====== Authentication Middleware ======
 const isAuthenticated = (req, res, next) => {
+  console.log('🔐 Auth check - Session:', req.session.authenticated);
   if (req.session.authenticated) {
     next();
   } else {
@@ -98,10 +100,15 @@ app.post('/api/login', async (req, res) => {
     const { password } = req.body;
     const correctPassword = process.env.DASHBOARD_PASSWORD || 'VaibhavDiwali2024';
 
+    console.log('🔑 Login attempt');
+
     if (password === correctPassword) {
       req.session.authenticated = true;
+      await new Promise((resolve) => req.session.save(resolve)); // Ensure session is saved
+      console.log('✅ Login successful, session saved');
       res.json({ success: true, message: 'Login successful' });
     } else {
+      console.log('❌ Invalid password');
       res.status(401).json({ error: 'Invalid password' });
     }
   } catch (err) {
@@ -116,6 +123,7 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/auth-status', (req, res) => {
+  console.log('🔍 Auth status check:', req.session.authenticated);
   res.json({ authenticated: !!req.session.authenticated });
 });
 
@@ -439,3 +447,20 @@ process.on('SIGINT', async () => {
   }
   process.exit(0);
 });
+```
+
+**Key changes:**
+1. ✅ `secure: isProduction` - Uses secure cookies only in production
+2. ✅ `sameSite: 'none'` in production - Required for cross-origin cookies
+3. ✅ `proxy: isProduction` - Trust Render's proxy
+4. ✅ Added `req.session.save()` in login to ensure session is persisted
+5. ✅ Added logging to track authentication
+
+**Now update your Render Environment Variables:**
+
+Make sure you have:
+```
+NODE_ENV=production
+FRONTEND_URL=https://your-frontend-url.onrender.com
+SESSION_SECRET=some-random-secret-key
+DASHBOARD_PASSWORD=YourPassword123
