@@ -12,93 +12,117 @@ const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
 
-const FRONTEND_URLS = [
-  (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, ''),
-  'https://vaibhav-wp2.onrender.com',
-  'http://localhost:5173',
-];
+// Get all allowed frontend URLs
+const getAllowedOrigins = () => {
+  const origins = [
+    process.env.FRONTEND_URL,
+    'https://vaibhav-wp2.onrender.com',
+    'http://localhost:5173',
+    'http://localhost:5174'
+  ].filter(Boolean).map(url => url.replace(/\/$/, ''));
+  
+  console.log('✅ Allowed origins:', origins);
+  return origins;
+};
 
-const io = new Server(server, {
-  cors: {
-    origin: function(origin, callback) {
-      if (!origin) return callback(null, true);
-      const cleanedOrigin = origin.replace(/\/$/, '');
-      if (FRONTEND_URLS.some(url => cleanedOrigin === url || cleanedOrigin.includes('onrender.com'))) {
-        callback(null, true);
-      } else {
-        console.warn('⚠️ CORS blocked origin:', origin);
-        callback(new Error('Not allowed by CORS: ' + origin));
-      }
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    credentials: true
+const FRONTEND_URLS = getAllowedOrigins();
+
+// Trust proxy for Render
+app.set('trust proxy', 1);
+
+// CORS configuration
+const corsOptions = {
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    const cleanedOrigin = origin.replace(/\/$/, '');
+    
+    // Check if origin is allowed
+    if (FRONTEND_URLS.includes(cleanedOrigin) || cleanedOrigin.includes('onrender.com')) {
+      callback(null, true);
+    } else {
+      console.warn('⚠️ CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
   },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Set-Cookie'],
+  maxAge: 86400
+};
+
+app.use(cors(corsOptions));
+
+// Socket.IO with same CORS
+const io = new Server(server, {
+  cors: corsOptions,
   transports: ['websocket', 'polling'],
   allowEIO3: true,
   pingTimeout: 60000,
   pingInterval: 25000
 });
 
-app.set('trust proxy', 1);
-
-app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
-    const cleanedOrigin = origin.replace(/\/$/, '');
-    if (FRONTEND_URLS.some(url => cleanedOrigin === url || cleanedOrigin.includes('onrender.com'))) {
-      return callback(null, true);
-    } else {
-      console.warn('⚠️ CORS blocked origin:', origin);
-      return callback(new Error('Not allowed by CORS: ' + origin));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+// Body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Session configuration
 const isProduction = process.env.NODE_ENV === 'production';
 
-const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET || 'wbridge-secret-key-change-this-in-production',
+const sessionConfig = {
+  secret: process.env.SESSION_SECRET || 'wbridge-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
   name: 'wbridge.sid',
   cookie: {
     secure: isProduction,
-    maxAge: 24 * 60 * 60 * 1000,
     httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
     sameSite: isProduction ? 'none' : 'lax',
-    path: '/'
+    path: '/',
+    domain: undefined // Let browser handle it
   },
-  proxy: true
-});
+  proxy: true,
+  rolling: true // Reset cookie expiration on every request
+};
 
-app.use(sessionMiddleware);
+app.use(session(sessionConfig));
+
+// Debug middleware
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path} - Session: ${req.sessionID?.substring(0, 8)}... Auth: ${!!req.session.authenticated}`);
+  next();
+});
 
 let whatsappClient;
 
+// Authentication middleware
 const isAuthenticated = (req, res, next) => {
-  console.log('🔐 Auth check - Session ID:', req.sessionID);
-  console.log('🔐 Authenticated:', req.session.authenticated);
-  
-  if (req.session.authenticated) {
+  if (req.session && req.session.authenticated) {
     next();
   } else {
-    res.status(401).json({ error: 'Unauthorized', sessionID: req.sessionID });
+    console.log('❌ Unauthorized access attempt:', {
+      path: req.path,
+      sessionID: req.sessionID,
+      authenticated: req.session?.authenticated,
+      cookie: req.headers.cookie ? 'present' : 'missing'
+    });
+    res.status(401).json({ 
+      error: 'Unauthorized',
+      message: 'Please log in again'
+    });
   }
 };
 
+// Routes
 app.get('/', (req, res) => {
   res.json({ 
     status: 'WBridge Backend Running',
     version: '1.0.0',
     author: 'Vaibhav',
-    socketConnections: io.engine.clientsCount,
-    sessionID: req.sessionID
+    authenticated: !!req.session.authenticated
   });
 });
 
@@ -107,59 +131,50 @@ app.post('/api/login', async (req, res) => {
     const { password } = req.body;
     const correctPassword = process.env.DASHBOARD_PASSWORD || 'VaibhavDiwali2024';
 
-    console.log('🔑 Login attempt - Session ID:', req.sessionID);
+    console.log('🔑 Login attempt');
 
     if (password === correctPassword) {
       req.session.authenticated = true;
       
       await new Promise((resolve, reject) => {
         req.session.save((err) => {
-          if (err) {
-            console.error('❌ Session save error:', err);
-            reject(err);
-          } else {
-            console.log('✅ Login successful - Session saved:', req.sessionID);
-            resolve();
-          }
+          if (err) reject(err);
+          else resolve();
         });
       });
 
+      console.log('✅ Login successful - Session:', req.sessionID.substring(0, 8));
+      
       res.json({ 
         success: true, 
-        message: 'Login successful',
-        sessionID: req.sessionID
+        message: 'Login successful'
       });
     } else {
-      console.log('❌ Invalid password attempt');
       res.status(401).json({ error: 'Invalid password' });
     }
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('❌ Login error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/api/logout', (req, res) => {
   req.session.destroy((err) => {
-    if (err) {
-      console.error('Logout error:', err);
-    }
+    if (err) console.error('Logout error:', err);
+    res.clearCookie('wbridge.sid');
     res.json({ success: true, message: 'Logged out successfully' });
   });
 });
 
 app.get('/api/auth-status', (req, res) => {
-  console.log('🔍 Auth status check - Session ID:', req.sessionID, 'Authenticated:', req.session.authenticated);
   res.json({ 
-    authenticated: !!req.session.authenticated,
-    sessionID: req.sessionID
+    authenticated: !!req.session.authenticated
   });
 });
 
 app.get('/api/status', isAuthenticated, (req, res) => {
   try {
     const status = whatsappClient.getStatus();
-    console.log('📊 Status requested:', status);
     res.json(status);
   } catch (err) {
     console.error('Status error:', err);
@@ -170,8 +185,7 @@ app.get('/api/status', isAuthenticated, (req, res) => {
 app.get('/api/qr', isAuthenticated, (req, res) => {
   try {
     const { qrCode } = whatsappClient.getStatus();
-    console.log('📱 QR requested, available:', !!qrCode);
-    res.json({ qrCode: qrCode || null, message: qrCode ? undefined : 'No QR code available' });
+    res.json({ qrCode: qrCode || null });
   } catch (err) {
     console.error('QR error:', err);
     res.status(500).json({ error: err.message });
@@ -403,40 +417,32 @@ app.post('/api/contact-auto-replies/:id/toggle', isAuthenticated, (req, res) => 
   }
 });
 
+// Socket.IO
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);
-  console.log('📊 Total connections:', io.engine.clientsCount);
 
   if (whatsappClient) {
     const status = whatsappClient.getStatus();
-    console.log('📤 Sending initial status to new client:', status);
     socket.emit('status_update', status);
     
     if (status.qrCode) {
-      console.log('📱 Sending QR code to new client');
       socket.emit('qr', status.qrCode);
     }
   }
 
   socket.on('disconnect', () => {
     console.log('🔌 Client disconnected:', socket.id);
-    console.log('📊 Total connections:', io.engine.clientsCount);
   });
 
   socket.on('request_status', () => {
-    console.log('📨 Status requested by client:', socket.id);
     if (whatsappClient) {
       const status = whatsappClient.getStatus();
       socket.emit('status_update', status);
-      console.log('📤 Status sent to client');
     }
-  });
-
-  socket.on('error', (error) => {
-    console.error('❌ Socket error:', error);
   });
 });
 
+// Streak scheduler
 const scheduleStreakUpdate = () => {
   const now = new Date();
   const night = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
@@ -451,9 +457,10 @@ const scheduleStreakUpdate = () => {
     }, 24 * 60 * 60 * 1000);
   }, msToMidnight);
 
-  console.log(`⏰ Streak scheduler started. Next update in ${Math.round(msToMidnight / 1000 / 60)} minutes`);
+  console.log(`⏰ Streak scheduler started`);
 };
 
+// Initialize WhatsApp
 const initializeWhatsApp = async () => {
   try {
     console.log('🚀 Initializing WhatsApp Client...');
@@ -465,15 +472,14 @@ const initializeWhatsApp = async () => {
   }
 };
 
+// Start server
 server.listen(PORT, async () => {
   console.log(`
   ╔════════════════════════════════════════╗
   ║   🌉 WBridge Backend Server Running   ║
   ║                                        ║
   ║   Port: ${PORT}                         ║
-  ║   Frontend: ${FRONTEND_URLS[0]}    ║
-  ║   Environment: ${process.env.NODE_ENV || 'development'}              ║
-  ║   Author: Vaibhav                      ║
+  ║   Environment: ${isProduction ? 'production' : 'development'}              ║
   ╚════════════════════════════════════════╝
   `);
 
