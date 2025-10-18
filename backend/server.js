@@ -488,14 +488,3 @@ process.on('SIGINT', async () => {
   }
   process.exit(0);
 });
-```
-
-### **2. Update Render Environment Variables**
-
-In your Render backend dashboard, make sure you have:
-```
-NODE_ENV=production
-FRONTEND_URL=https://vaibhav-wp2.onrender.com
-SESSION_SECRET=your-very-secure-random-string-here
-DASHBOARD_PASSWORD=YourPassword123
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
