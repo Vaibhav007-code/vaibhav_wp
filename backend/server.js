@@ -39,17 +39,19 @@ const io = new Server(server, {
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
+
     const cleanedOrigin = origin.replace(/\/$/, '');
     if (FRONTEND_URLS.includes(cleanedOrigin)) {
-      callback(null, true);
+      return callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS: ' + origin));
+      return callback(new Error('Not allowed by CORS: ' + origin));
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 
 // ====== Body Parser ======
 app.use(express.json());
