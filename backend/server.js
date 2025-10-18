@@ -11,26 +11,51 @@ const app = express();
 const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+// ====== FRONTEND URL ======
+// Ensure no trailing slash here
+const FRONTEND_URLS = [
+  (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, ''),
+  'http://localhost:5173', // optional local dev
+];
 
 const io = new Server(server, {
   cors: {
-    origin: FRONTEND_URL,
-    methods: ['GET', 'POST'],
+    origin: function(origin, callback) {
+      if (!origin) return callback(null, true);
+      const cleanedOrigin = origin.replace(/\/$/, '');
+      if (FRONTEND_URLS.includes(cleanedOrigin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS: ' + origin));
+      }
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true
   }
-});
+}));
 
+// ====== CORS ======
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true);
+    const cleanedOrigin = origin.replace(/\/$/, '');
+    if (FRONTEND_URLS.includes(cleanedOrigin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS: ' + origin));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// ====== Body Parser ======
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ====== Session ======
 app.use(session({
   secret: process.env.SESSION_SECRET || 'wbridge-secret-key',
   resave: false,
@@ -43,8 +68,10 @@ app.use(session({
   }
 }));
 
+// ====== WhatsApp Client ======
 let whatsappClient;
 
+// ====== Authentication Middleware ======
 const isAuthenticated = (req, res, next) => {
   if (req.session.authenticated) {
     next();
@@ -63,8 +90,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// ========== Authentication Routes ==========
-
+// ===== Authentication =====
 app.post('/api/login', async (req, res) => {
   try {
     const { password } = req.body;
@@ -91,8 +117,7 @@ app.get('/api/auth-status', (req, res) => {
   res.json({ authenticated: !!req.session.authenticated });
 });
 
-// ========== WhatsApp Connection Routes ==========
-
+// ===== WhatsApp Routes =====
 app.get('/api/status', isAuthenticated, (req, res) => {
   try {
     const status = whatsappClient.getStatus();
@@ -106,11 +131,7 @@ app.get('/api/status', isAuthenticated, (req, res) => {
 app.get('/api/qr', isAuthenticated, (req, res) => {
   try {
     const { qrCode } = whatsappClient.getStatus();
-    if (qrCode) {
-      res.json({ qrCode });
-    } else {
-      res.json({ qrCode: null, message: 'No QR code available' });
-    }
+    res.json({ qrCode: qrCode || null, message: qrCode ? undefined : 'No QR code available' });
   } catch (err) {
     console.error('QR error:', err);
     res.status(500).json({ error: err.message });
@@ -127,8 +148,7 @@ app.post('/api/whatsapp/logout', isAuthenticated, async (req, res) => {
   }
 });
 
-// ========== Message Routes ==========
-
+// ===== Messages Routes =====
 app.get('/api/messages', isAuthenticated, (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
@@ -162,6 +182,7 @@ app.get('/api/messages/search/:query', isAuthenticated, (req, res) => {
   }
 });
 
+// ===== Chats =====
 app.get('/api/chats', isAuthenticated, (req, res) => {
   try {
     const chats = dbHelpers.getUniqueChats();
@@ -174,8 +195,7 @@ app.get('/api/chats', isAuthenticated, (req, res) => {
 
 app.post('/api/messages/:id/read', isAuthenticated, (req, res) => {
   try {
-    const { id } = req.params;
-    dbHelpers.markAsRead(id);
+    dbHelpers.markAsRead(req.params.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Mark read error:', err);
@@ -185,8 +205,7 @@ app.post('/api/messages/:id/read', isAuthenticated, (req, res) => {
 
 app.post('/api/chats/:chatId/read', isAuthenticated, (req, res) => {
   try {
-    const { chatId } = req.params;
-    dbHelpers.markChatAsRead(chatId);
+    dbHelpers.markChatAsRead(req.params.chatId);
     res.json({ success: true });
   } catch (err) {
     console.error('Mark chat read error:', err);
@@ -197,10 +216,7 @@ app.post('/api/chats/:chatId/read', isAuthenticated, (req, res) => {
 app.post('/api/send', isAuthenticated, async (req, res) => {
   try {
     const { number, message } = req.body;
-
-    if (!number || !message) {
-      return res.status(400).json({ error: 'Number and message are required' });
-    }
+    if (!number || !message) return res.status(400).json({ error: 'Number and message are required' });
 
     const result = await whatsappClient.sendMessage(number, message);
     res.json({ success: true, ...result });
@@ -220,16 +236,12 @@ app.get('/api/unread-count', isAuthenticated, (req, res) => {
   }
 });
 
-// ========== Settings Routes ==========
-
+// ===== Auto-Reply Routes =====
 app.get('/api/auto-reply/status', isAuthenticated, (req, res) => {
   try {
     const enabled = dbHelpers.getSetting('autoReplyEnabled');
     const message = dbHelpers.getSetting('autoReplyMessage');
-    res.json({ 
-      enabled: enabled === 'true',
-      message 
-    });
+    res.json({ enabled: enabled === 'true', message });
   } catch (err) {
     console.error('Get auto-reply status error:', err);
     res.status(500).json({ error: err.message });
@@ -250,9 +262,7 @@ app.post('/api/auto-reply/toggle', isAuthenticated, (req, res) => {
 app.post('/api/auto-reply/message', isAuthenticated, (req, res) => {
   try {
     const { message } = req.body;
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
-    }
+    if (!message) return res.status(400).json({ error: 'Message is required' });
     dbHelpers.updateSetting('autoReplyMessage', message);
     res.json({ success: true, message });
   } catch (err) {
@@ -261,12 +271,10 @@ app.post('/api/auto-reply/message', isAuthenticated, (req, res) => {
   }
 });
 
-// ========== Streak Routes ==========
-
+// ===== Streak Routes =====
 app.get('/api/streak', isAuthenticated, (req, res) => {
   try {
-    const streak = dbHelpers.getStreak();
-    res.json(streak);
+    res.json(dbHelpers.getStreak());
   } catch (err) {
     console.error('Get streak error:', err);
     res.status(500).json({ error: err.message });
@@ -275,8 +283,7 @@ app.get('/api/streak', isAuthenticated, (req, res) => {
 
 app.post('/api/streak/update', isAuthenticated, (req, res) => {
   try {
-    const streak = dbHelpers.updateStreakDaily();
-    res.json({ success: true, streak });
+    res.json({ success: true, streak: dbHelpers.updateStreakDaily() });
   } catch (err) {
     console.error('Update streak error:', err);
     res.status(500).json({ error: err.message });
@@ -285,16 +292,14 @@ app.post('/api/streak/update', isAuthenticated, (req, res) => {
 
 app.post('/api/streak/reset', isAuthenticated, (req, res) => {
   try {
-    const streak = dbHelpers.resetStreak();
-    res.json({ success: true, streak });
+    res.json({ success: true, streak: dbHelpers.resetStreak() });
   } catch (err) {
     console.error('Reset streak error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ========== WBridge Toggle Routes ==========
-
+// ===== WBridge Routes =====
 app.get('/api/wbridge/status', isAuthenticated, (req, res) => {
   try {
     const enabled = dbHelpers.getSetting('wbridgeEnabled');
@@ -317,12 +322,10 @@ app.post('/api/wbridge/toggle', isAuthenticated, (req, res) => {
   }
 });
 
-// ========== Contact Auto-Reply Routes ==========
-
+// ===== Contact Auto-Reply =====
 app.get('/api/contact-auto-replies', isAuthenticated, (req, res) => {
   try {
-    const contacts = dbHelpers.getAllContactAutoReplies();
-    res.json({ contacts });
+    res.json({ contacts: dbHelpers.getAllContactAutoReplies() });
   } catch (err) {
     console.error('Get contact auto-replies error:', err);
     res.status(500).json({ error: err.message });
@@ -332,10 +335,7 @@ app.get('/api/contact-auto-replies', isAuthenticated, (req, res) => {
 app.post('/api/contact-auto-replies', isAuthenticated, (req, res) => {
   try {
     const { contactNumber, contactName, customMessage, enabled } = req.body;
-    
-    if (!contactNumber || !customMessage) {
-      return res.status(400).json({ error: 'Contact number and message are required' });
-    }
+    if (!contactNumber || !customMessage) return res.status(400).json({ error: 'Contact number and message are required' });
 
     dbHelpers.addContactAutoReply(contactNumber, contactName || contactNumber, customMessage, enabled ? 1 : 0);
     console.log(`✅ Added custom auto-reply for ${contactName || contactNumber}`);
@@ -348,9 +348,8 @@ app.post('/api/contact-auto-replies', isAuthenticated, (req, res) => {
 
 app.delete('/api/contact-auto-replies/:id', isAuthenticated, (req, res) => {
   try {
-    const { id } = req.params;
-    dbHelpers.deleteContactAutoReply(id);
-    console.log(`🗑️ Deleted contact auto-reply ID: ${id}`);
+    dbHelpers.deleteContactAutoReply(req.params.id);
+    console.log(`🗑️ Deleted contact auto-reply ID: ${req.params.id}`);
     res.json({ success: true });
   } catch (err) {
     console.error('Delete contact auto-reply error:', err);
@@ -360,10 +359,9 @@ app.delete('/api/contact-auto-replies/:id', isAuthenticated, (req, res) => {
 
 app.post('/api/contact-auto-replies/:id/toggle', isAuthenticated, (req, res) => {
   try {
-    const { id } = req.params;
     const { enabled } = req.body;
-    dbHelpers.toggleContactAutoReply(id, enabled);
-    console.log(`🔄 Toggled contact auto-reply ID: ${id} to ${enabled ? 'ON' : 'OFF'}`);
+    dbHelpers.toggleContactAutoReply(req.params.id, enabled);
+    console.log(`🔄 Toggled contact auto-reply ID: ${req.params.id} to ${enabled ? 'ON' : 'OFF'}`);
     res.json({ success: true });
   } catch (err) {
     console.error('Toggle contact auto-reply error:', err);
@@ -371,8 +369,7 @@ app.post('/api/contact-auto-replies/:id/toggle', isAuthenticated, (req, res) => 
   }
 });
 
-// ========== Socket.IO Events ==========
-
+// ===== Socket.IO Events =====
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);
 
@@ -386,16 +383,10 @@ io.on('connection', (socket) => {
   });
 });
 
-// ========== Daily Streak Scheduler ==========
-
+// ===== Daily Streak Scheduler =====
 const scheduleStreakUpdate = () => {
   const now = new Date();
-  const night = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-    0, 0, 0
-  );
+  const night = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
   const msToMidnight = night.getTime() - now.getTime();
 
   setTimeout(() => {
@@ -410,8 +401,7 @@ const scheduleStreakUpdate = () => {
   console.log(`⏰ Streak scheduler started. Next update in ${Math.round(msToMidnight / 1000 / 60)} minutes`);
 };
 
-// ========== Initialize WhatsApp Client ==========
-
+// ===== Initialize WhatsApp Client =====
 const initializeWhatsApp = async () => {
   try {
     console.log('🚀 Initializing WhatsApp Client...');
@@ -423,20 +413,19 @@ const initializeWhatsApp = async () => {
   }
 };
 
-// ========== Start Server ==========
-
+// ===== Start Server =====
 server.listen(PORT, async () => {
   console.log(`
   ╔════════════════════════════════════════╗
   ║   🌉 WBridge Backend Server Running   ║
   ║                                        ║
   ║   Port: ${PORT}                         ║
-  ║   Frontend: ${FRONTEND_URL}    ║
+  ║   Frontend: ${FRONTEND_URLS[0]}    ║
   ║   Environment: ${process.env.NODE_ENV || 'development'}              ║
   ║   Author: Vaibhav                      ║
   ╚════════════════════════════════════════╝
   `);
-  
+
   await initializeWhatsApp();
   scheduleStreakUpdate();
 });
