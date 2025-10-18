@@ -1,0 +1,5 @@
+﻿node_modules
+.env
+backend/.wwebjs_auth
+backend/wbridge.db
+frontend/dist
