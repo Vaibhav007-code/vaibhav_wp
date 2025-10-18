@@ -11,6 +11,7 @@ class WhatsAppClient {
     this.io = io;
     this.openChats = new Set();
     this.isDashboardMessage = false;
+    this.isInitializing = false;
     this.initClient();
     this.setupSocketListeners();
   }
@@ -90,7 +91,9 @@ class WhatsAppClient {
       authStrategy: new LocalAuth({
         dataPath: '.wwebjs_auth'
       }),
-      puppeteer: puppeteerConfig
+      puppeteer: puppeteerConfig,
+      authTimeoutMs: 60000,
+      qrTimeoutMs: 60000
     });
 
     this.setupEventHandlers();
@@ -100,28 +103,60 @@ class WhatsAppClient {
     this.client.on('qr', async (qr) => {
       try {
         this.qrCode = await qrcode.toDataURL(qr);
+        this.isReady = false;
         console.log('📱 QR Code generated successfully');
         this.io.emit('qr', this.qrCode);
+        this.io.emit('status_update', {
+          isConnected: false,
+          hasQR: true,
+          qrCode: this.qrCode
+        });
       } catch (err) {
         console.error('❌ QR Code generation error:', err);
       }
     });
 
+    this.client.on('authenticated', () => {
+      console.log('✅ Client authenticated - loading session...');
+      this.qrCode = null;
+      this.io.emit('authenticated');
+      this.io.emit('status_update', {
+        isConnected: false,
+        hasQR: false,
+        qrCode: null
+      });
+    });
+
+    this.client.on('loading_screen', (percent, message) => {
+      console.log(`⏳ Loading WhatsApp: ${percent}% - ${message}`);
+      this.io.emit('loading_screen', { percent, message });
+    });
+
     this.client.on('ready', () => {
       this.isReady = true;
       this.qrCode = null;
-      console.log('✅ WhatsApp Client is ready!');
+      this.isInitializing = false;
+      console.log('✅ WhatsApp Client is READY and connected!');
+      
       this.io.emit('ready');
-    });
-
-    this.client.on('authenticated', () => {
-      console.log('✅ Client authenticated');
-      this.io.emit('authenticated');
+      this.io.emit('status_update', {
+        isConnected: true,
+        hasQR: false,
+        qrCode: null
+      });
     });
 
     this.client.on('auth_failure', (msg) => {
       console.error('❌ Authentication failed:', msg);
+      this.isReady = false;
+      this.qrCode = null;
       this.io.emit('auth_failure', msg);
+      this.io.emit('status_update', {
+        isConnected: false,
+        hasQR: false,
+        qrCode: null,
+        error: 'Authentication failed'
+      });
     });
 
     this.client.on('disconnected', (reason) => {
@@ -129,14 +164,22 @@ class WhatsAppClient {
       this.isReady = false;
       this.qrCode = null;
       this.io.emit('disconnected', reason);
+      this.io.emit('status_update', {
+        isConnected: false,
+        hasQR: false,
+        qrCode: null
+      });
     });
 
     this.client.on('message', async (message) => {
       await this.handleMessage(message);
     });
 
-    this.client.on('loading_screen', (percent, message) => {
-      console.log(`⏳ Loading: ${percent}% - ${message}`);
+    this.client.on('message_create', async (message) => {
+      // This fires for both sent and received messages
+      if (message.fromMe) {
+        console.log('📤 Message sent from this device');
+      }
     });
   }
 
@@ -147,10 +190,14 @@ class WhatsAppClient {
         return;
       }
 
+      if (message.fromMe) {
+        console.log('📤 Outgoing message detected, ignoring');
+        return;
+      }
+
       const contact = await message.getContact();
       const chat = await message.getChat();
       const isGroup = chat.isGroup;
-      const fromMe = message.fromMe;
 
       const chatId = message.from;
       const chatName = isGroup ? chat.name : (contact.pushname || contact.name || contact.number);
@@ -160,9 +207,9 @@ class WhatsAppClient {
         chatId: chatId,
         chatName: chatName,
         body: message.body,
-        fromMe: fromMe,
+        fromMe: false,
         timestamp: message.timestamp,
-        isRead: fromMe ? 1 : 0
+        isRead: 0
       };
 
       dbHelpers.saveMessage(msgData);
@@ -174,24 +221,32 @@ class WhatsAppClient {
         isFromOpenChat
       });
 
-      if (!fromMe) {
-        const wbridgeEnabled = dbHelpers.getSetting('wbridgeEnabled') === 'true';
-        if (!wbridgeEnabled) return;
+      console.log(`📨 New message from ${chatName}: ${message.body.substring(0, 50)}...`);
 
-        const contactAutoReply = dbHelpers.getContactAutoReply(chatId);
-        if (contactAutoReply && contactAutoReply.enabled) {
-          console.log(`🤖 Sending custom auto-reply to ${chatName}`);
-          await chat.sendMessage(contactAutoReply.customMessage);
-          return;
-        }
+      // Auto-reply logic
+      const wbridgeEnabled = dbHelpers.getSetting('wbridgeEnabled') === 'true';
+      if (!wbridgeEnabled) {
+        console.log('🔕 WBridge auto-reply is disabled');
+        return;
+      }
 
-        const autoReplyEnabled = dbHelpers.getSetting('autoReplyEnabled') === 'true';
-        if (autoReplyEnabled) {
-          const autoReplyMessage = dbHelpers.getSetting('autoReplyMessage') || 
-            'Thank you for your message! I will get back to you soon.';
-          console.log(`🤖 Sending auto-reply to ${chatName}`);
-          await chat.sendMessage(autoReplyMessage);
-        }
+      // Check for custom contact auto-reply
+      const contactAutoReply = dbHelpers.getContactAutoReply(chatId);
+      if (contactAutoReply && contactAutoReply.enabled) {
+        console.log(`🤖 Sending custom auto-reply to ${chatName}`);
+        await chat.sendMessage(contactAutoReply.customMessage);
+        return;
+      }
+
+      // Check for global auto-reply
+      const autoReplyEnabled = dbHelpers.getSetting('autoReplyEnabled') === 'true';
+      if (autoReplyEnabled) {
+        const autoReplyMessage = dbHelpers.getSetting('autoReplyMessage') || 
+          'Thank you for your message! I will get back to you soon.';
+        console.log(`🤖 Sending global auto-reply to ${chatName}`);
+        await chat.sendMessage(autoReplyMessage);
+      } else {
+        console.log('🔕 Global auto-reply is disabled');
       }
     } catch (err) {
       console.error('❌ Error handling message:', err);
@@ -199,11 +254,18 @@ class WhatsAppClient {
   }
 
   async initialize() {
+    if (this.isInitializing) {
+      console.log('⚠️ Already initializing, skipping...');
+      return;
+    }
+
     try {
+      this.isInitializing = true;
       console.log('🚀 Starting WhatsApp client initialization...');
       await this.client.initialize();
     } catch (err) {
       console.error('❌ Error initializing client:', err);
+      this.isInitializing = false;
       throw err;
     }
   }
@@ -259,11 +321,14 @@ class WhatsAppClient {
 
   async logout() {
     try {
-      await this.client.logout();
-      await this.client.destroy();
+      if (this.client) {
+        await this.client.logout();
+        await this.client.destroy();
+      }
       this.isReady = false;
       this.qrCode = null;
       this.openChats.clear();
+      this.isInitializing = false;
       console.log('✅ Logged out successfully');
     } catch (err) {
       console.error('❌ Error logging out:', err);
