@@ -43,19 +43,3 @@ EXPOSE 5000
 
 # Start application
 CMD ["node", "server.js"]
-```
-
-**Replace your entire Dockerfile with the above code** (no backticks, no markdown).
-
-Also create `.dockerignore` in project root:
-```
-node_modules
-npm-debug.log
-.env
-.git
-.gitignore
-frontend
-.wwebjs_auth
-*.db
-README.md
-.DS_Store
