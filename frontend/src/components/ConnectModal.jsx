@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Smartphone } from 'lucide-react';
 
-function ConnectModal({ qrCode, onClose }) {
+function ConnectModal({ qrCode, onClose, socket }) {
   return (
     <div className="modal-overlay">
       <div className="modal-content">
@@ -22,6 +22,9 @@ function ConnectModal({ qrCode, onClose }) {
             <div className="qr-loading">
               <div className="spinner"></div>
               <p>Generating QR Code...</p>
+              <p style={{ fontSize: '12px', marginTop: '10px', opacity: 0.7 }}>
+                Socket: {socket?.connected ? '✅ Connected' : '❌ Disconnected'}
+              </p>
             </div>
           )}
         </div>
