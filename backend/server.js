@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 5000;
 
 const FRONTEND_URLS = [
   (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, ''),
+  'https://vaibhav-wp2.onrender.com',
   'http://localhost:5173',
 ];
 
@@ -22,24 +23,30 @@ const io = new Server(server, {
     origin: function(origin, callback) {
       if (!origin) return callback(null, true);
       const cleanedOrigin = origin.replace(/\/$/, '');
-      if (FRONTEND_URLS.includes(cleanedOrigin)) {
+      if (FRONTEND_URLS.some(url => cleanedOrigin === url || cleanedOrigin.includes('onrender.com'))) {
         callback(null, true);
       } else {
+        console.warn('⚠️ CORS blocked origin:', origin);
         callback(new Error('Not allowed by CORS: ' + origin));
       }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true
-  }
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
     const cleanedOrigin = origin.replace(/\/$/, '');
-    if (FRONTEND_URLS.includes(cleanedOrigin)) {
+    if (FRONTEND_URLS.some(url => cleanedOrigin === url || cleanedOrigin.includes('onrender.com'))) {
       return callback(null, true);
     } else {
+      console.warn('⚠️ CORS blocked origin:', origin);
       return callback(new Error('Not allowed by CORS: ' + origin));
     }
   },
@@ -80,7 +87,8 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'WBridge Backend Running',
     version: '1.0.0',
-    author: 'Vaibhav'
+    author: 'Vaibhav',
+    socketConnections: io.engine.clientsCount
   });
 });
 
@@ -92,8 +100,10 @@ app.post('/api/login', async (req, res) => {
     if (password === correctPassword) {
       req.session.authenticated = true;
       await new Promise((resolve) => req.session.save(resolve));
+      console.log('✅ Login successful');
       res.json({ success: true, message: 'Login successful' });
     } else {
+      console.log('❌ Invalid password attempt');
       res.status(401).json({ error: 'Invalid password' });
     }
   } catch (err) {
@@ -114,6 +124,7 @@ app.get('/api/auth-status', (req, res) => {
 app.get('/api/status', isAuthenticated, (req, res) => {
   try {
     const status = whatsappClient.getStatus();
+    console.log('📊 Status requested:', status);
     res.json(status);
   } catch (err) {
     console.error('Status error:', err);
@@ -124,6 +135,7 @@ app.get('/api/status', isAuthenticated, (req, res) => {
 app.get('/api/qr', isAuthenticated, (req, res) => {
   try {
     const { qrCode } = whatsappClient.getStatus();
+    console.log('📱 QR requested, available:', !!qrCode);
     res.json({ qrCode: qrCode || null, message: qrCode ? undefined : 'No QR code available' });
   } catch (err) {
     console.error('QR error:', err);
@@ -358,14 +370,35 @@ app.post('/api/contact-auto-replies/:id/toggle', isAuthenticated, (req, res) => 
 
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);
+  console.log('📊 Total connections:', io.engine.clientsCount);
+
+  if (whatsappClient) {
+    const status = whatsappClient.getStatus();
+    console.log('📤 Sending initial status to new client:', status);
+    socket.emit('status_update', status);
+    
+    if (status.qrCode) {
+      console.log('📱 Sending QR code to new client');
+      socket.emit('qr', status.qrCode);
+    }
+  }
 
   socket.on('disconnect', () => {
     console.log('🔌 Client disconnected:', socket.id);
+    console.log('📊 Total connections:', io.engine.clientsCount);
   });
 
   socket.on('request_status', () => {
-    const status = whatsappClient.getStatus();
-    socket.emit('status_update', status);
+    console.log('📨 Status requested by client:', socket.id);
+    if (whatsappClient) {
+      const status = whatsappClient.getStatus();
+      socket.emit('status_update', status);
+      console.log('📤 Status sent to client');
+    }
+  });
+
+  socket.on('error', (error) => {
+    console.error('❌ Socket error:', error);
   });
 });
 
