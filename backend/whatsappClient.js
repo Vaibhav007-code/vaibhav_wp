@@ -273,25 +273,3 @@ class WhatsAppClient {
 }
 
 module.exports = WhatsAppClient;
-```
-
-### Step 4: Configure Render to Use Docker
-
-1. **Go to your Render Dashboard**
-2. **Create a NEW Web Service** (or update existing)
-3. **Connect your GitHub repo**
-4. **Important Settings:**
-   - **Environment**: Select **Docker** (not Node)
-   - **Region**: Choose closest to you
-   - **Branch**: main
-   - **Dockerfile Path**: `Dockerfile`
-   - **Docker Context Directory**: `.` (root)
-
-5. **Environment Variables** (Add these in Render dashboard):
-```
-NODE_ENV=production
-PORT=5000
-FRONTEND_URL=https://your-frontend-url.onrender.com
-SESSION_SECRET=your-secret-key-123
-DASHBOARD_PASSWORD=YourPassword123
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
