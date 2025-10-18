@@ -1,7 +1,32 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Smartphone } from 'lucide-react';
 
 function ConnectModal({ qrCode, onClose, socket }) {
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState('');
+
+  useEffect(() => {
+    if (socket) {
+      socket.on('loading_screen', ({ percent, message }) => {
+        setLoadingProgress(percent);
+        setLoadingMessage(message);
+      });
+
+      socket.on('ready', () => {
+        setLoadingProgress(100);
+        setLoadingMessage('Connected!');
+        setTimeout(() => {
+          onClose();
+        }, 1000);
+      });
+
+      return () => {
+        socket.off('loading_screen');
+        socket.off('ready');
+      };
+    }
+  }, [socket, onClose]);
+
   return (
     <div className="modal-overlay">
       <div className="modal-content">
@@ -16,8 +41,30 @@ function ConnectModal({ qrCode, onClose, socket }) {
         </div>
 
         <div className="qr-code-container">
-          {qrCode ? (
+          {qrCode && loadingProgress === 0 ? (
             <img src={qrCode} alt="QR Code" className="qr-code" />
+          ) : loadingProgress > 0 ? (
+            <div className="qr-loading">
+              <div className="spinner"></div>
+              <p>Connecting to WhatsApp...</p>
+              <div style={{ 
+                width: '100%', 
+                backgroundColor: '#e0e0e0', 
+                borderRadius: '10px', 
+                marginTop: '20px',
+                overflow: 'hidden'
+              }}>
+                <div style={{ 
+                  width: `${loadingProgress}%`, 
+                  backgroundColor: '#25d366', 
+                  height: '10px',
+                  transition: 'width 0.3s ease'
+                }}></div>
+              </div>
+              <p style={{ fontSize: '12px', marginTop: '10px', opacity: 0.7 }}>
+                {loadingProgress}% - {loadingMessage}
+              </p>
+            </div>
           ) : (
             <div className="qr-loading">
               <div className="spinner"></div>
