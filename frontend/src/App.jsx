@@ -15,6 +15,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://vaibhav-wp-34.onrender.
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [showCustomContactsModal, setShowCustomContactsModal] = useState(false);
@@ -38,105 +39,108 @@ function App() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      // FIXED: Added proper Socket.IO configuration
-      const newSocket = io(API_URL, {
-        withCredentials: true,
-        transports: ['websocket', 'polling'],
-        reconnectionDelay: 1000,
-        reconnection: true,
-        reconnectionAttempts: 10,
-        autoConnect: true
-      });
-
-      setSocket(newSocket);
-
-      newSocket.on('connect', () => {
-        console.log('🔌 Socket connected:', newSocket.id);
-        // Request status immediately after connecting
-        newSocket.emit('request_status');
-      });
-
-      newSocket.on('disconnect', () => {
-        console.log('🔌 Socket disconnected');
-      });
-
-      newSocket.on('qr', (qr) => {
-        console.log('📱 Received QR code via socket');
-        setQrCode(qr);
-        setShowQRModal(true);
-      });
-
-      // ADDED: Listen for status updates
-      newSocket.on('status_update', (status) => {
-        console.log('📊 Status update received:', status);
-        if (status.qrCode) {
-          console.log('📱 QR code in status update');
-          setQrCode(status.qrCode);
-          setShowQRModal(true);
-        }
-        if (status.isConnected) {
-          setIsConnected(true);
-          setShowQRModal(false);
-        }
-      });
-
-      newSocket.on('ready', () => {
-        console.log('✅ WhatsApp ready');
-        setIsConnected(true);
-        setShowQRModal(false);
-        setQrCode(null);
-        fetchChats();
-        fetchAutoReplyStatus();
-      });
-
-      newSocket.on('authenticated', () => {
-        console.log('✅ WhatsApp authenticated');
-      });
-
-      newSocket.on('disconnected', () => {
-        console.log('🔌 WhatsApp disconnected');
-        setIsConnected(false);
-      });
-
-      newSocket.on('new_message', (message) => {
-        console.log('📨 New message received:', message);
-        
-        if (selectedChat) {
-          newSocket.emit('chat_opened', selectedChat.chatId);
-        }
-        
-        fetchChats();
-        if (selectedChat && message.chatId === selectedChat.chatId) {
-          fetchMessages(selectedChat.chatId);
-        }
-        fetchUnreadCount();
-      });
-
-      newSocket.on('streak_updated', (newStreak) => {
-        console.log('✅ Streak updated:', newStreak);
-      });
-
-      newSocket.on('streak_reset', (data) => {
-        console.log('⚠️ Streak reset:', data);
-        alert('⚠️ Streak Reset! Detected WhatsApp usage from phone/web.');
-      });
-
-      newSocket.on('connect_error', (error) => {
-        console.error('❌ Socket connection error:', error);
-      });
-
-      newSocket.on('error', (error) => {
-        console.error('❌ Socket error:', error);
-      });
-
-      return () => {
-        console.log('🔌 Closing socket connection');
-        newSocket.close();
-      };
+      initializeApp();
     }
   }, [isAuthenticated]);
 
-  // Separate useEffect for selected chat
+  const initializeApp = () => {
+    // Initialize Socket.IO
+    const newSocket = io(API_URL, {
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      reconnectionDelay: 1000,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      autoConnect: true
+    });
+
+    setSocket(newSocket);
+
+    newSocket.on('connect', () => {
+      console.log('🔌 Socket connected:', newSocket.id);
+      newSocket.emit('request_status');
+    });
+
+    newSocket.on('disconnect', () => {
+      console.log('🔌 Socket disconnected');
+    });
+
+    newSocket.on('qr', (qr) => {
+      console.log('📱 Received QR code via socket');
+      setQrCode(qr);
+      setShowQRModal(true);
+    });
+
+    newSocket.on('status_update', (status) => {
+      console.log('📊 Status update received:', status);
+      if (status.qrCode) {
+        console.log('📱 QR code in status update');
+        setQrCode(status.qrCode);
+        setShowQRModal(true);
+      }
+      if (status.isConnected) {
+        setIsConnected(true);
+        setShowQRModal(false);
+      }
+    });
+
+    newSocket.on('ready', () => {
+      console.log('✅ WhatsApp ready');
+      setIsConnected(true);
+      setShowQRModal(false);
+      setQrCode(null);
+      fetchChats();
+      fetchAutoReplyStatus();
+    });
+
+    newSocket.on('authenticated', () => {
+      console.log('✅ WhatsApp authenticated');
+    });
+
+    newSocket.on('disconnected', () => {
+      console.log('🔌 WhatsApp disconnected');
+      setIsConnected(false);
+    });
+
+    newSocket.on('new_message', (message) => {
+      console.log('📨 New message received:', message);
+      
+      if (selectedChat) {
+        newSocket.emit('chat_opened', selectedChat.chatId);
+      }
+      
+      fetchChats();
+      if (selectedChat && message.chatId === selectedChat.chatId) {
+        fetchMessages(selectedChat.chatId);
+      }
+      fetchUnreadCount();
+    });
+
+    newSocket.on('streak_updated', (newStreak) => {
+      console.log('✅ Streak updated:', newStreak);
+    });
+
+    newSocket.on('streak_reset', (data) => {
+      console.log('⚠️ Streak reset:', data);
+      alert('⚠️ Streak Reset! Detected WhatsApp usage from phone/web.');
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.error('❌ Socket connection error:', error);
+    });
+
+    // Fetch initial data
+    checkWhatsAppStatus();
+    fetchChats();
+    fetchAutoReplyStatus();
+    fetchUnreadCount();
+
+    return () => {
+      console.log('🔌 Closing socket connection');
+      newSocket.close();
+    };
+  };
+
   useEffect(() => {
     if (socket && selectedChat) {
       socket.emit('chat_opened', selectedChat.chatId);
@@ -146,21 +150,15 @@ function App() {
     }
   }, [selectedChat, socket]);
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      checkWhatsAppStatus();
-      fetchChats();
-      fetchAutoReplyStatus();
-      fetchUnreadCount();
-    }
-  }, [isAuthenticated]);
-
   const checkAuth = async () => {
     try {
       const response = await axios.get('/api/auth-status');
       setIsAuthenticated(response.data.authenticated);
     } catch (error) {
       console.error('Auth check failed:', error);
+      setIsAuthenticated(false);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -239,14 +237,15 @@ function App() {
   const handleLogout = async () => {
     try {
       await axios.post('/api/logout');
+      if (socket) {
+        socket.close();
+      }
       setIsAuthenticated(false);
       setIsConnected(false);
       setChats([]);
       setMessages([]);
       setSelectedChat(null);
-      if (socket) {
-        socket.close();
-      }
+      setSocket(null);
     } catch (error) {
       console.error('Logout failed:', error);
     }
@@ -328,6 +327,14 @@ function App() {
   const filteredChats = showUnreadOnly 
     ? chats.filter(chat => chat.unreadCount > 0)
     : chats;
+
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <div className="spinner"></div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />;
