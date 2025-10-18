@@ -1,0 +1,26 @@
+@"
+# Ignore node modules
+node_modules
+**/node_modules
+
+# Ignore env files
+.env
+**/.env
+
+# Ignore logs
+*.log
+
+# Ignore WhatsApp session data
+backend/.wwebjs_auth
+backend/.wwebjs_auth/*
+
+# Ignore database
+backend/wbridge.db
+
+# Create or edit .gitignore
+echo node_modules/ >> .gitignore
+echo .env >> .gitignore
+
+# Ignore build folders
+frontend/dist
+"@ | Out-File -FilePath ".gitignore" -Encoding UTF8
