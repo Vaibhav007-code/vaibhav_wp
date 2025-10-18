@@ -1,5 +1,19 @@
-﻿node_modules
+﻿# Dependencies
+node_modules
+
+# Environment variables
 .env
+backend/.env
+
+# WhatsApp session data (never commit this!)
 backend/.wwebjs_auth
+backend/.wwebjs_auth/*
+
+# Database
 backend/wbridge.db
+
+# Build files
 frontend/dist
+
+# Logs
+*.log
