@@ -45,7 +45,9 @@ EXPOSE 5000
 CMD ["node", "server.js"]
 ```
 
-### Step 2: Create `.dockerignore` in project root
+**Replace your entire Dockerfile with the above code** (no backticks, no markdown).
+
+Also create `.dockerignore` in project root:
 ```
 node_modules
 npm-debug.log
