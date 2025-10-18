@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libxss1 \
     xdg-utils \
+    python3 \
+    make \
+    g++ \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,8 +35,11 @@ WORKDIR /app
 # Copy package files
 COPY backend/package*.json ./
 
-# Install dependencies
-RUN npm install --production
+# Clean npm cache and install dependencies
+RUN npm cache clean --force && \
+    npm install --legacy-peer-deps --production || \
+    npm install --legacy-peer-deps || \
+    npm install
 
 # Copy application code
 COPY backend/ ./
