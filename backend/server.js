@@ -12,7 +12,6 @@ const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
 
-// ====== FRONTEND URL ======
 const FRONTEND_URLS = [
   (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, ''),
   'http://localhost:5173',
@@ -34,7 +33,6 @@ const io = new Server(server, {
   }
 });
 
-// ====== CORS - CRITICAL: Must allow credentials ======
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
@@ -50,11 +48,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// ====== Body Parser ======
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ====== Session - FIXED FOR CROSS-ORIGIN ======
 const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(session({
@@ -62,29 +58,23 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: isProduction, // true in production (requires HTTPS)
+    secure: isProduction,
     maxAge: 24 * 60 * 60 * 1000,
     httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax', // 'none' required for cross-origin
-    domain: isProduction ? undefined : undefined // Let browser handle it
+    sameSite: isProduction ? 'none' : 'lax'
   },
-  proxy: isProduction // Trust proxy in production
+  proxy: isProduction
 }));
 
-// ====== WhatsApp Client ======
 let whatsappClient;
 
-// ====== Authentication Middleware ======
 const isAuthenticated = (req, res, next) => {
-  console.log('🔐 Auth check - Session:', req.session.authenticated);
   if (req.session.authenticated) {
     next();
   } else {
     res.status(401).json({ error: 'Unauthorized' });
   }
 };
-
-// ==================== ROUTES ====================
 
 app.get('/', (req, res) => {
   res.json({ 
@@ -94,21 +84,16 @@ app.get('/', (req, res) => {
   });
 });
 
-// ===== Authentication =====
 app.post('/api/login', async (req, res) => {
   try {
     const { password } = req.body;
     const correctPassword = process.env.DASHBOARD_PASSWORD || 'VaibhavDiwali2024';
 
-    console.log('🔑 Login attempt');
-
     if (password === correctPassword) {
       req.session.authenticated = true;
-      await new Promise((resolve) => req.session.save(resolve)); // Ensure session is saved
-      console.log('✅ Login successful, session saved');
+      await new Promise((resolve) => req.session.save(resolve));
       res.json({ success: true, message: 'Login successful' });
     } else {
-      console.log('❌ Invalid password');
       res.status(401).json({ error: 'Invalid password' });
     }
   } catch (err) {
@@ -123,11 +108,9 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/auth-status', (req, res) => {
-  console.log('🔍 Auth status check:', req.session.authenticated);
   res.json({ authenticated: !!req.session.authenticated });
 });
 
-// ===== WhatsApp Routes =====
 app.get('/api/status', isAuthenticated, (req, res) => {
   try {
     const status = whatsappClient.getStatus();
@@ -158,7 +141,6 @@ app.post('/api/whatsapp/logout', isAuthenticated, async (req, res) => {
   }
 });
 
-// ===== Messages Routes =====
 app.get('/api/messages', isAuthenticated, (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
@@ -192,7 +174,6 @@ app.get('/api/messages/search/:query', isAuthenticated, (req, res) => {
   }
 });
 
-// ===== Chats =====
 app.get('/api/chats', isAuthenticated, (req, res) => {
   try {
     const chats = dbHelpers.getUniqueChats();
@@ -246,7 +227,6 @@ app.get('/api/unread-count', isAuthenticated, (req, res) => {
   }
 });
 
-// ===== Auto-Reply Routes =====
 app.get('/api/auto-reply/status', isAuthenticated, (req, res) => {
   try {
     const enabled = dbHelpers.getSetting('autoReplyEnabled');
@@ -281,7 +261,6 @@ app.post('/api/auto-reply/message', isAuthenticated, (req, res) => {
   }
 });
 
-// ===== Streak Routes =====
 app.get('/api/streak', isAuthenticated, (req, res) => {
   try {
     res.json(dbHelpers.getStreak());
@@ -309,7 +288,6 @@ app.post('/api/streak/reset', isAuthenticated, (req, res) => {
   }
 });
 
-// ===== WBridge Routes =====
 app.get('/api/wbridge/status', isAuthenticated, (req, res) => {
   try {
     const enabled = dbHelpers.getSetting('wbridgeEnabled');
@@ -332,7 +310,6 @@ app.post('/api/wbridge/toggle', isAuthenticated, (req, res) => {
   }
 });
 
-// ===== Contact Auto-Reply =====
 app.get('/api/contact-auto-replies', isAuthenticated, (req, res) => {
   try {
     res.json({ contacts: dbHelpers.getAllContactAutoReplies() });
@@ -379,7 +356,6 @@ app.post('/api/contact-auto-replies/:id/toggle', isAuthenticated, (req, res) => 
   }
 });
 
-// ===== Socket.IO Events =====
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);
 
@@ -393,7 +369,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===== Daily Streak Scheduler =====
 const scheduleStreakUpdate = () => {
   const now = new Date();
   const night = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
@@ -411,7 +386,6 @@ const scheduleStreakUpdate = () => {
   console.log(`⏰ Streak scheduler started. Next update in ${Math.round(msToMidnight / 1000 / 60)} minutes`);
 };
 
-// ===== Initialize WhatsApp Client =====
 const initializeWhatsApp = async () => {
   try {
     console.log('🚀 Initializing WhatsApp Client...');
@@ -423,7 +397,6 @@ const initializeWhatsApp = async () => {
   }
 };
 
-// ===== Start Server =====
 server.listen(PORT, async () => {
   console.log(`
   ╔════════════════════════════════════════╗
@@ -447,20 +420,3 @@ process.on('SIGINT', async () => {
   }
   process.exit(0);
 });
-```
-
-**Key changes:**
-1. ✅ `secure: isProduction` - Uses secure cookies only in production
-2. ✅ `sameSite: 'none'` in production - Required for cross-origin cookies
-3. ✅ `proxy: isProduction` - Trust Render's proxy
-4. ✅ Added `req.session.save()` in login to ensure session is persisted
-5. ✅ Added logging to track authentication
-
-**Now update your Render Environment Variables:**
-
-Make sure you have:
-```
-NODE_ENV=production
-FRONTEND_URL=https://your-frontend-url.onrender.com
-SESSION_SECRET=some-random-secret-key
-DASHBOARD_PASSWORD=YourPassword123
