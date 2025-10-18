@@ -1,6 +1,7 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const { dbHelpers } = require('./database');
+const fs = require('fs');
 
 class WhatsAppClient {
   constructor(io) {
@@ -37,39 +38,59 @@ class WhatsAppClient {
     });
   }
 
+  findChromiumPath() {
+    const paths = [
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome'
+    ];
+
+    for (const path of paths) {
+      if (path && fs.existsSync(path)) {
+        console.log(`✅ Found Chromium at: ${path}`);
+        return path;
+      }
+    }
+
+    console.warn('⚠️ No Chromium found, using default');
+    return undefined;
+  }
+
   initClient() {
     console.log('🔄 Initializing WhatsApp Client...');
     
-    // Detect Chromium path for different environments
-    const chromiumPath = process.env.CHROME_BIN || 
-                        process.env.PUPPETEER_EXECUTABLE_PATH ||
-                        '/usr/bin/chromium-browser' ||
-                        '/usr/bin/chromium' ||
-                        '/usr/bin/google-chrome';
+    const chromiumPath = this.findChromiumPath();
+
+    const puppeteerConfig = {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-software-rasterizer',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
+      ]
+    };
+
+    if (chromiumPath) {
+      puppeteerConfig.executablePath = chromiumPath;
+    }
 
     this.client = new Client({
       authStrategy: new LocalAuth({
         dataPath: '.wwebjs_auth'
       }),
-      puppeteer: {
-        headless: true,
-        executablePath: chromiumPath,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu',
-          '--disable-extensions',
-          '--disable-software-rasterizer',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding'
-        ]
-      }
+      puppeteer: puppeteerConfig
     });
 
     this.setupEventHandlers();
@@ -79,7 +100,7 @@ class WhatsAppClient {
     this.client.on('qr', async (qr) => {
       try {
         this.qrCode = await qrcode.toDataURL(qr);
-        console.log('📱 QR Code generated');
+        console.log('📱 QR Code generated successfully');
         this.io.emit('qr', this.qrCode);
       } catch (err) {
         console.error('❌ QR Code generation error:', err);
@@ -252,3 +273,25 @@ class WhatsAppClient {
 }
 
 module.exports = WhatsAppClient;
+```
+
+### Step 4: Configure Render to Use Docker
+
+1. **Go to your Render Dashboard**
+2. **Create a NEW Web Service** (or update existing)
+3. **Connect your GitHub repo**
+4. **Important Settings:**
+   - **Environment**: Select **Docker** (not Node)
+   - **Region**: Choose closest to you
+   - **Branch**: main
+   - **Dockerfile Path**: `Dockerfile`
+   - **Docker Context Directory**: `.` (root)
+
+5. **Environment Variables** (Add these in Render dashboard):
+```
+NODE_ENV=production
+PORT=5000
+FRONTEND_URL=https://your-frontend-url.onrender.com
+SESSION_SECRET=your-secret-key-123
+DASHBOARD_PASSWORD=YourPassword123
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
