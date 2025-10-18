@@ -33,7 +33,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true
   }
-}));
+});
 
 // ====== CORS ======
 app.use(cors({
